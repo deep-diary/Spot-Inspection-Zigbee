@@ -377,7 +377,15 @@ UINT16 SerialApp_ProcessEvent( uint8 task_id, UINT16 events )
         }
       }
       if(temp_sens_model!=CHECK_MAC_ADDR_MODE)
-        SerialApp_SendPeriodicMessage();         
+      {
+        SerialApp_SendPeriodicMessage();        
+      }
+      else
+      {
+        uint8 buff[3]={0XB9,0X00,0xB9};
+        HalUARTWrite (HAL_UART_PORT_0, (uint8 *)buff, 3);  //close the lesa
+      }
+       
 #else      
       SerialApp_SendPeriodicMessage();
 #endif

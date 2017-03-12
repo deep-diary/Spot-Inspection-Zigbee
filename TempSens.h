@@ -13,7 +13,7 @@
 
 #define LITHIUM_NUMS          2       //1节电池
 #define SAMPLE_RATE           3       //1/2采样
-#define SOFTWARE_VERSION     "20170224"       //软件版本
+#define SOFTWARE_VERSION     "20170312"       //软件版本
 #define HARDWARE_VERSION     "20170224"       //硬件版本
 
 #define TEMP_DETECT_MODE        0X01

@@ -25,11 +25,9 @@ void temp_sens_init(void)
   memset(ep_addr.soft_vers,0,MAX_BYTES_OF_VERS_INFO);
   strcpy(ep_addr.hard_vers,HARDWARE_VERSION);
   strcpy(ep_addr.soft_vers,SOFTWARE_VERSION);
-  
+  system_SOC=systemSoc(1);
   uint8 buff[3]={0XB9,0X01,0xB8};
   HalUARTWrite (HAL_UART_PORT_0, (uint8 *)buff, 3);  //open the lesa
-  system_SOC=systemSoc(1);
-  
 #ifdef ENGLISH 
               HalLcdWriteString("      TEMP      ", HAL_LCD_LINE_1 );
 #else 
@@ -85,7 +83,6 @@ bool SerialApp_SendData_Temp(uint8 *temp)
       HalLcdDispString(16,3,(uint8*)disp_buff,CODE_32_32); 
     }  
   }
-  
   if(INT)  //the button is released
   {
     shut_down_time=system_time;
