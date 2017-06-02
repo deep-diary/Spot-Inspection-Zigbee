@@ -12,10 +12,10 @@
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof(arr)[0])
 
 //----------------------定义锂电池数量及总电压与采样电压的比例，，
-#define LITHIUM_NUMS    1       //1节电池
-#define SAMPLE_RATE     2       //1/2采样
-#define SOFTWARE_VERSION     "20170224"       //软件版本
-#define HARDWARE_VERSION     "20170224"       //硬件版本
+//#define LITHIUM_NUMS    1       //1节电池
+//#define SAMPLE_RATE     2       //1/2采样
+//#define SOFTWARE_VERSION     "20170224"       //软件版本
+//#define HARDWARE_VERSION     "20170224"       //硬件版本
 extern void sensors_init(void);
 extern void SetLamp(bool on);
 extern uint8 GetGas( void );

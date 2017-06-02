@@ -7,11 +7,9 @@
 #include "hal_lcd.h"
 #include "OnBoard.h"
 #include "gps.h"
-
+#include "gprs.h"
 #include "SerialApp.h"
 #ifdef ZIGBEE_GPS
-
-
 
 extern uint16 HalUARTWrite(uint8 port, uint8 *buf, uint16 len);
 
@@ -26,8 +24,14 @@ void gpsInit(void)
   memset(ep_addr.soft_vers,0,MAX_BYTES_OF_VERS_INFO);
   strcpy(ep_addr.hard_vers,HARDWARE_VERSION);
   strcpy(ep_addr.soft_vers,SOFTWARE_VERSION);
+  HalUARTWrite(0, "AT+MGPSC=1\r", osal_strlen("AT+MGPSC=1\r"));
+  
 }
-
+void gpsGet(void)
+{
+  HalUARTWrite(0, "AT+GETGPS=\"ALL\"\r", osal_strlen("AT+GETGPS=\"ALL\"\r")); 
+  serial_type = SERIAL_TYPE_GPS_DATA;
+}
 void CalibrateTime()
 {
 	uint8 year=m_Info.UTC_time.year;
@@ -303,8 +307,15 @@ void ParseframeData(char* frame, int bufflen)
 		//12) Checksum.(检查位)
 
         //上传数据到协调器
-        SendGpsDataToCoor();
-        
+        //SendGpsDataToCoor();
+        if(is_time_to_report)
+        {
+            cattleOrientationReport();
+            is_time_to_report = 0;
+            //GPS_POWER = 0;
+        }
+          //cattleOrientationReport();  
+
 		//数据有效就保存
 		if(keyBuff[2][0]=='A')
 		{
@@ -579,80 +590,6 @@ void GpsInit()
 	m_Info.EorW=1; 
 }
 
-//-------------------------------显示gps信息
-void gpsDisplay(uint8* gpsData)
-{
-    char buff[50]={0};
-
-    if(gpsData==0) return;
-    
-    if(gpsData[0]>0)
-    {
-        //
-        sprintf(buff, "  20%02d年%02d月%02d日",gpsData[1],gpsData[2],gpsData[3]);
-        HalLcdWriteString( buff, HAL_LCD_LINE_1 );  
-
-        sprintf(buff, "  %02d时%02d分%02d秒",gpsData[4],gpsData[5],gpsData[6]);
-        HalLcdWriteString( buff, HAL_LCD_LINE_2 );  
-
-
-        unsigned long bb=BUILD_UINT32(gpsData[8],gpsData[9],gpsData[10],gpsData[11]);
-        double longitude=((double)bb)/10000000.0;        
-        bb=BUILD_UINT32(gpsData[12],gpsData[13],gpsData[14],gpsData[15]);
-        double latitude=((double)bb)/10000000.0;
-
-        if((gpsData[7]&0x01)==0x01)
-        {
-            //北半球
-
-            if((gpsData[7]&0x02)==0x02)
-            {
-                //东经
-                sprintf(buff, "北纬:%f",latitude);
-                HalUARTWrite(0, (uint8 *)buff, osal_strlen(buff)); 
-                HalUARTWrite(0, "\n", 1); 
-                HalLcdWriteString( buff, HAL_LCD_LINE_3 );  
-                sprintf(buff, "东经:%f",longitude);
-                HalUARTWrite(0, (uint8 *)buff, osal_strlen(buff)); 
-                HalUARTWrite(0, "\n", 1); 
-                HalLcdWriteString( buff, HAL_LCD_LINE_4 );  
-            }
-            else
-            {
-                //西经
-                sprintf(buff, "北纬:%f",latitude);
-                HalLcdWriteString( buff, HAL_LCD_LINE_3 );  
-                sprintf(buff, "东经:%f",longitude);                
-                HalLcdWriteString( buff, HAL_LCD_LINE_4 );  
-            }
-        }
-        else
-        {
-            //南半球
-            if(GetEorW()>0)
-            {
-                //东经
-                sprintf(buff, "南纬:%f",latitude);
-                HalLcdWriteString( buff, HAL_LCD_LINE_3 );  
-                sprintf(buff, "东经:%f",longitude);
-                HalLcdWriteString( buff, HAL_LCD_LINE_4 );  
-            }
-            else
-            {
-                //西经
-                sprintf(buff, "南纬:%f",latitude);
-                HalLcdWriteString( buff, HAL_LCD_LINE_3 );  
-                sprintf(buff, "西经:%f",longitude);                
-                HalLcdWriteString( buff, HAL_LCD_LINE_4 );  
-            }
-        }        
-    }
-    else
-    {
-        HalLcdWriteString( "GPS未定位", HAL_LCD_LINE_1 );  
-    }      
-}
-
 //----------------------------将gps数据发送给协调器------------------------
 void  SendGpsDataToCoor()
 {
@@ -710,4 +647,108 @@ void  SendGpsDataToCoor()
     SerialApp_SendDataToCoordinator(data, 22,SERIALAPP_GPS_PKG);
     
 }
+
+void gpsSave(P_GpsOutData p_gps_data)
+{
+  uint8 location=0x00;
+  p_gps_data->fix=GetFix();
+  p_gps_data->UTC_time.year=GetYear();
+  p_gps_data->UTC_time.month=GetMonth();
+  p_gps_data->UTC_time.day=GetDay();
+  p_gps_data->UTC_time.hour=GetHour();
+  p_gps_data->UTC_time.min=GetMinute();
+  p_gps_data->UTC_time.sec=GetSecond();
+  
+  location|=GetSorN()?1:0;
+  location|=GetEorW()?2:0;
+  
+  p_gps_data->location=location;
+  p_gps_data->longitude=(uint32)(GetLongitude()*10000000);
+  p_gps_data->latitude=(uint32)(GetLatitude()*10000000);
+  p_gps_data->speed=(uint16)(GetSpeed());
+  p_gps_data->direction=(uint16)(GetDirection());
+  p_gps_data->altitude=(uint16)GetAltitude();  
+  
+  p_gps_data->longitude = BigLittleSwap32(p_gps_data->longitude);
+  p_gps_data->latitude = BigLittleSwap32(p_gps_data->latitude);
+  p_gps_data->speed = BigLittleSwap16(p_gps_data->speed);
+  p_gps_data->direction = BigLittleSwap16(p_gps_data->direction);
+  p_gps_data->altitude = BigLittleSwap16(p_gps_data->altitude);
+}
 #endif
+
+//-------------------------------显示gps信息
+void gpsDisplay(uint8* gpsData)
+{
+    char buff[50]={0};
+
+    if(gpsData==0) return;
+    
+    if(gpsData[0]>0)
+    {
+        //
+        sprintf(buff, "  20%02d年%02d月%02d日",gpsData[1],gpsData[2],gpsData[3]);
+        HalLcdWriteString( buff, HAL_LCD_LINE_1 );  
+
+        sprintf(buff, "  %02d时%02d分%02d秒",gpsData[4],gpsData[5],gpsData[6]);
+        HalLcdWriteString( buff, HAL_LCD_LINE_2 );  
+
+
+        unsigned long bb=BUILD_UINT32(gpsData[8],gpsData[9],gpsData[10],gpsData[11]);
+        double longitude=((double)bb)/10000000.0;        
+        bb=BUILD_UINT32(gpsData[12],gpsData[13],gpsData[14],gpsData[15]);
+        double latitude=((double)bb)/10000000.0;
+
+        if((gpsData[7]&0x01)==0x01)
+        {
+            //北半球
+
+            if((gpsData[7]&0x02)==0x02)
+            {
+                //东经
+                sprintf(buff, "北纬:%f",latitude);
+//                HalUARTWrite(0, (uint8 *)buff, osal_strlen(buff)); 
+//                HalUARTWrite(0, "\n", 1); 
+                HalLcdWriteString( buff, HAL_LCD_LINE_3 );  
+                sprintf(buff, "东经:%f",longitude);
+//                HalUARTWrite(0, (uint8 *)buff, osal_strlen(buff)); 
+//                HalUARTWrite(0, "\n", 1); 
+                HalLcdWriteString( buff, HAL_LCD_LINE_4 );  
+            }
+            else
+            {
+                //西经
+                sprintf(buff, "北纬:%f",latitude);
+                HalLcdWriteString( buff, HAL_LCD_LINE_3 );  
+                sprintf(buff, "东经:%f",longitude);                
+                HalLcdWriteString( buff, HAL_LCD_LINE_4 );  
+            }
+        }
+        else
+        {
+            //南半球
+            //if(GetEorW()>0)
+            if((gpsData[7]&0x02)==0x02)
+            {
+                //东经
+                sprintf(buff, "南纬:%f",latitude);
+                HalLcdWriteString( buff, HAL_LCD_LINE_3 );  
+                sprintf(buff, "东经:%f",longitude);
+                HalLcdWriteString( buff, HAL_LCD_LINE_4 );  
+            }
+            else
+            {
+                //西经
+                sprintf(buff, "南纬:%f",latitude);
+                HalLcdWriteString( buff, HAL_LCD_LINE_3 );  
+                sprintf(buff, "西经:%f",longitude);                
+                HalLcdWriteString( buff, HAL_LCD_LINE_4 );  
+            }
+        }        
+    }
+    else
+    {
+        HalLcdWriteString( "GPS未定位", HAL_LCD_LINE_1 );  
+    }      
+}
+

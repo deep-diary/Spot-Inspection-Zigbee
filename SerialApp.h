@@ -63,12 +63,13 @@ extern "C"
 #define SERIALAPP_DEVICE_VERSION         0
 #define SERIALAPP_FLAGS                  0
 
-#define SERIALAPP_MAX_CLUSTERS           5
+#define SERIALAPP_MAX_CLUSTERS           6
 #define SERIALAPP_CLUSTERID              1
 #define SERIALAPP_CLUSTERID2             2
 #define SERIALAPP_JSON_CLUSTERID         3
 #define SERIALAPP_GPS_PKG                4
 #define SERIALAPP_END_DEV_INFO           5 
+#define SERIALAPP_PACKAGED               6 
   
 #define SERIALAPP_SEND_EVT               0x0001
 #define SERIALAPP_RESP_EVT               0x0002
@@ -76,7 +77,7 @@ extern "C"
 #define SERIALAPP_SYSTEM_TIME            0x0008
 
   
-#define SERIALAPP_SEND_PERIODIC_TIMEOUT  500
+#define SERIALAPP_SEND_PERIODIC_TIMEOUT  1000
 #define SYS_ON_TIME 20    //second
 #define SHUT_DOWN_TIME (SYS_ON_TIME*1000/SERIALAPP_SEND_PERIODIC_TIMEOUT)
   
@@ -93,33 +94,40 @@ extern "C"
  * MACROS
  */
 
-
-//终端数
-#define MAX_DEVICE  		6
-  
-
-  
-//***********************终端节点模式选择*********************//
-//------------------------------------------------------------//
-#ifndef ZDO_COORDINATOR
-//#define ZIGBEE_RFID
-//#define ZIGBEE_GPS
-#define ZIGBEE_SENS_TEMP
-//#define ZIGBEE_AI_DETECT
-//#define ZIGBEE_DI_DETECT
-//#define ZIGBEE_DO_CTRL
-//#define ZIGBEE_IO_DECT_CTRL
-//#define ZIGBEE_SENSOR
-//#define ZIGBEE_STEP_MOTOR
-//#define ZIGBEE_COLORFUL_LIGHT
-#else
-  
 #define LITHIUM_NUMS    1       //1节电池
 #define SAMPLE_RATE     2       //1/2采样
 #define SOFTWARE_VERSION     "170228"       //软件版本
 #define HARDWARE_VERSION     "170224"       //硬件版本
   
+//***********************终端节点模式选择*********************//
+//------------------------------------------------------------//
+//#define ZIGBEE_GPS
+#ifdef defined(ZDO_COORDINATOR)
+  
+#elif defined(ZDO_ENDDEVICE)
+//#define ZIGBEE_RFID
+//#define ZIGBEE_SENS_TEMP
+//#define ZIGBEE_AI_DETECT
+//#define ZIGBEE_DI_DETECT
+//#define ZIGBEE_DO_CTRL
+//#define ZIGBEE_IO_DECT_CTRL
+//#define ZIGBEE_SENSOR
+#define ZIGBEE_CATTER_ORIENTATION
+//#define ZIGBEE_STEP_MOTOR
+//#define ZIGBEE_COLORFUL_LIGHT
+  
+#ifdef ZIGBEE_CATTER_ORIENTATION
+#define ZIGBEE_SENSOR
+#define ZIGBEE_GPS
+#define ZIGBEE_GPRS
+#endif 
+  
+#else
+  
+
 #endif
+
+  
 //------------------------------------------------------------//
   
   
@@ -156,6 +164,8 @@ extern "C"
 #define ZIGBEE_FUN_CODE_UPDATA_RGB_DATA		0x23	//zigbee-->手机/PC 上传所有传感器数据
 #define ZIGBEE_FUN_CODE_END_DEV_INFO		0x24	//终端节点信息
 #define ZIGBEE_FUN_CODE_VIRB_SENS_DETECT			        0x25	//检测到振动或温度传感器插入
+#define ZIGBEE_FUN_CODE_GPS			        0x26	//检测到振动或温度传感器插入
+#define ZIGBEE_FUN_CODE_CATTER_ORIENTATION			        0x27	//检测到振动或温度传感器插入
 typedef enum
 {
 	JSON_TYPE_GETWAY_TO_ZIGBEE = 1,
@@ -180,6 +190,18 @@ typedef enum
         DEV_TYPE_NULL
 }DEV_TYPE; 
 
+typedef enum
+{
+	SERIAL_TYPE_GPRS_INIT = 1,
+        SERIAL_TYPE_GPS_INIT,
+        SERIAL_TYPE_FINISH_INIT,
+	SERIAL_TYPE_GPS_DATA, 
+        SERIAL_TYPE_GPRS_SEND,
+        SERIAL_TYPE_ENTER_SLEEP,
+}SERIAL_TYPE; 
+
+#define GPS_POWER       P1_0    //gps 及传感器电源
+
 extern DEV_TYPE dev_type;
 extern uint8 system_time;
 extern uint8 period_time;
@@ -187,7 +209,7 @@ extern uint8 shut_down_time;
 extern uint8 bt_press_down_time;
 extern uint8 bt_press_up_time;
 extern uint8 system_SOC;
-
+extern uint8 is_time_to_report;
 //DEV_TYPE dev_type=DEV_TYPE_NULL;
 typedef enum
 {
@@ -228,24 +250,9 @@ typedef struct End_Point_Info
 }EP_INFO;
 
 extern EP_INFO ep_addr;
-
-
-
-////每一个终端上的设备数据结构
-//typedef struct _end_device_data_info_
-//{
-//	int addr;		//终端端地址
-//	byte LampState;//灯的状态  TRUE:开灯
-//	bool Smoke;   //烟雾传感器TRUE:有烟雾
-//	bool HumanState; //人体感应的状态  true:有人
-//	bool LightSensor; //光每传感器 true:有强光感应
-//	int WindowCurtains;//电动窗状态,分为10级0~10
-//	byte rfid[4];			//rfid上报数据
-//	byte Temperature;//	温度
-//	byte Humidity;//湿度
-//	bool Flame;  //火焰传感器
-//}EndDeviceDataInfo;
-//
+extern SERIAL_TYPE serial_type;
+#define BigLittleSwap32(A) ((((uint32)(A)&0xFF000000)>>24)|(((uint32)(A)&0x00FF0000)>>8)|(((uint32)(A)&0x0000FF00)<<8)|(((uint32)(A)&0x000000FF)<<24))
+#define BigLittleSwap16(A) ((((uint16)(A)&0xFF00)>>8)|(((uint16)(A)&0x00FF)<<8))
 
 
 

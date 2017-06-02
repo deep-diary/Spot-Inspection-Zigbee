@@ -5,19 +5,17 @@
 #ifdef ZIGBEE_GPS
 #include "Hal_types.h"
 
-#define LITHIUM_NUMS    1       //1节电池
-#define SAMPLE_RATE     2       //1/2采样
-#define SOFTWARE_VERSION     "170228"       //软件版本
-#define HARDWARE_VERSION     "170224"       //硬件版本
+//#define LITHIUM_NUMS    1       //1节电池
+//#define SAMPLE_RATE     2       //1/2采样
+//#define SOFTWARE_VERSION     "170228"       //软件版本
+//#define HARDWARE_VERSION     "170224"       //硬件版本
 
 #define GPS_MAX_SVS 32
 #define NMEA_MAX_SV_INFO    4
 
 //调试宏
-#define GPS_DEBUG       1
+#define GPS_DEBUG       0
 
-#define LITHIUM_NUMS    2       //1节电池
-#define SAMPLE_RATE     3       //1/2采样
 
 //每个卫星信息
 typedef struct {
@@ -67,6 +65,18 @@ typedef struct _gps_info_
 }GpsInfo;
 
 
+typedef struct {
+  uint8 fix;  //0:未定位　1:2D定位　2:3D定位    //1 byte
+  TIME UTC_time;                                //6 byte
+  uint8 location;                                //1 byte 0x11,东经，北纬
+  uint32 longitude;                       //4 byte 
+  uint32 latitude;                        //4 byte
+  uint16 speed;                           //2 byte
+  uint16 direction;                       //2 byte
+  uint16 altitude;                        //2 byte
+}T_GpsOutData,*P_GpsOutData;
+
+
 void  SendGpsDataToCoor();
 void GpsDataParse(char* buff, int mLen);
 uint8 GetYear();
@@ -86,8 +96,11 @@ uint8 GetFix();
 void GpsInit();
 double GetLongitude1();
 double GetLatitude1();
+
+extern void gpsSave(P_GpsOutData p_gps_data);
 extern void  SendGpsDataToCoor();
-extern void gpsDisplay(uint8* gpsData);
 extern void gpsInit(void);
+extern void gpsGet(void);
 #endif
+extern void gpsDisplay(uint8* gpsData);
 #endif

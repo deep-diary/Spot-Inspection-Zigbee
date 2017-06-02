@@ -29,6 +29,9 @@
 #include "Sensors.h"
 #include "StepMotor.h"
 #include "gps.h"
+#include "CattleOrientation.h"
+#include "gprs.h"
+
 /*********************************************************************
 * MACROS
 */
@@ -38,13 +41,17 @@
 #define MAX_NODE     0x04
 #define UART_DEBUG   0x00        //调试宏,通过串口输出协调器和终端的IEEE、短地址
 
+
+//----------------------------------------------------------------------------
+
 bool virb_in_flag=0,sens_in_flag=0;
 DEV_TYPE dev_type = DEV_TYPE_NULL;
-
+SERIAL_TYPE serial_type = SERIAL_TYPE_GPRS_INIT;
 
 
 
 uint8 system_time=0;
+uint8 is_time_to_report=0;
 uint8 period_time=0;
 uint8 shut_down_time=SHUT_DOWN_TIME;
 uint8 bt_press_down_time=0;
@@ -63,7 +70,7 @@ EP_INFO ep_addr;
 
 #if !defined( SERIAL_APP_BAUD )
 //#define SERIAL_APP_BAUD  HAL_UART_BR_3840000000
-#define SERIAL_APP_BAUD  HAL_UART_BR_115200
+#define SERIAL_APP_BAUD  HAL_UART_BR_9600
 #endif
 
 // When the Rx buf space is less than this threshold, invoke the Rx callback.
@@ -91,10 +98,10 @@ EP_INFO ep_addr;
 
 // This is the max byte count per OTA message.
 #if !defined( SERIAL_APP_TX_MAX )
-#define SERIAL_APP_TX_MAX  30
+#define SERIAL_APP_TX_MAX  80
 #endif
 
-#define SERIAL_APP_RSP_CNT  4
+#define SERIAL_APP_RSP_CNT  6
 
 // This list should be filled with Application specific Cluster IDs.
 const cId_t SerialApp_ClusterList[SERIALAPP_MAX_CLUSTERS] =
@@ -103,7 +110,8 @@ const cId_t SerialApp_ClusterList[SERIALAPP_MAX_CLUSTERS] =
   SERIALAPP_CLUSTERID2,
   SERIALAPP_JSON_CLUSTERID,
   SERIALAPP_GPS_PKG,
-  SERIALAPP_END_DEV_INFO
+  SERIALAPP_END_DEV_INFO,
+  SERIALAPP_PACKAGED           //send the message to getway directly
 };
 
 const SimpleDescriptionFormat_t SerialApp_SimpleDesc =
@@ -180,9 +188,6 @@ static void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt );
 static void SerialApp_Send(void);
 static void SerialApp_Resp(void);
 static void SerialApp_CallBack(uint8 port, uint8 event);
-//static void timer1int(uint8 timerId, uint8 channel, uint8 channelMode);
-//static void timer0int(uint8 timerId, uint8 channel, uint8 channelMode);
-
 static void PrintAddrInfo(uint16 shortAddr, uint8 *pIeeeAddr);
 static void AfSendAddrInfo(void);
 static void GetIeeeAddr(uint8 * pIeeeAddr, uint8 *pStr);
@@ -195,6 +200,7 @@ void IO_init();
 uint8 systemSoc(uint8 channel);
 void Delay1ms(unsigned int msec);
 char NumberToLetter(unsigned char number);
+static void SerialApp_SendDataToGetway(uint8* data, int len,uint16 shortAddr);
 #if defined(ZDO_COORDINATOR)
 
 static void JsonCreatRfidSN(uint8 *data, uint16 addr);
@@ -210,7 +216,7 @@ static void JsonCreatVirbSensDetected(bool virb_stat,bool sens_stat);
 static void JsonCreatDoCoordCtrlReturn(uint8 cmd,bool stat);
 static void JsonCreatSendEndDevInfo(uint8 *data, uint16 addr);
 static void SerialApp_SendDataToEndDevice(uint8* data, int len);
-//static void JsonCreatHumanDetect(uint8 *data, uint16 addr);
+
 #else
 
 void SerialAppSetColorfulLight(uint8* data, int len);
@@ -235,7 +241,9 @@ void SerialApp_Init( uint8 task_id )
 {
   halUARTCfg_t uartConfig;
   SerialApp_TaskID = task_id;
-  IO_init();
+#if defined(ZDO_ENDDEVICE)
+  //macRadioUpdateTxPower();
+#endif
   
   //SerialApp_RxSeq = 0xC3;
 
@@ -255,25 +263,19 @@ void SerialApp_Init( uint8 task_id )
   uartConfig.intEnable            = TRUE;              // 2x30 don't care - see uart driver.
   uartConfig.callBackFunc         = SerialApp_CallBack;
   HalUARTOpen (UART0, &uartConfig);
-  
-  
-  
-  
-  
-  
+#if defined(ROUTER)
+#else  
+  IO_init();
+#endif
+//  serial_type=SERIAL_TYPE_GPRS_SEND;
+//  gprsSendMsgToServer(gprs_cmd_nums);
+      osal_start_timerEx( SerialApp_TaskID, SERIALAPP_SEND_PERIODIC_EVT,
+                       (SERIALAPP_SEND_PERIODIC_TIMEOUT + (osal_rand() & 0x00FF)) );
 #if defined ( LCD_SUPPORTED )
   //HalLcdWriteString( "SerialApp", HAL_LCD_LINE_2 );
 #endif
  
-      
-    osal_start_timerEx( SerialApp_TaskID, SERIALAPP_SEND_PERIODIC_EVT,
-                       SERIALAPP_SEND_PERIODIC_TIMEOUT);
-    osal_start_timerEx( SerialApp_TaskID, SERIALAPP_SYSTEM_TIME,
-                       SERIALAPP_SEND_PERIODIC_TIMEOUT);
-  //	HalUARTWrite(UART0, "Init", 4);
-  
-  //ZDO_RegisterForZDOMsg( SerialApp_TaskID, End_Device_Bind_rsp );
-  //ZDO_RegisterForZDOMsg( SerialApp_TaskID, Match_Desc_rsp );
+     
 }
 
 /*********************************************************************
@@ -322,16 +324,14 @@ UINT16 SerialApp_ProcessEvent( uint8 task_id, UINT16 events )
           Broadcast_DstAddr.addrMode = (afAddrMode_t)AddrBroadcast;
           Broadcast_DstAddr.endPoint = SERIALAPP_ENDPOINT;
           Broadcast_DstAddr.addr.shortAddr = 0xFFFF;
+
 #if UART_DEBUG           
           PrintAddrInfo( NLME_GetShortAddr(), aExtendedAddress + Z_EXTADDR_LEN - 1);
 #endif 
           
 #else                        //终端无线发送短地址、IEEE   
           AfSendAddrInfo();
-          //JsonCreatSendEndDevInfo();
-#ifdef ZIGBEE_SENS_TEMP              
-          HalLcdDispString(111, 0,"网",CODE_16_16);
-#endif          
+          //JsonCreatSendEndDevInfo();   
 #endif
           
         }
@@ -350,46 +350,7 @@ UINT16 SerialApp_ProcessEvent( uint8 task_id, UINT16 events )
   if ( events & SERIALAPP_SEND_PERIODIC_EVT )
   {
   
-    if(system_time>=2)        //开机画面显示1秒钟
-    {
-
-#if defined(ZIGBEE_SENS_TEMP)      
-      if(system_time==2)
-      {
-        LcdClearLine(2, 6);
-        if(INT)
-        {
-          uint8 mac_addr[10]={0};
-          uint8 strIeeeAddr[17] = {0};
-          osal_memcpy(mac_addr, NLME_GetExtAddr(), 8);
-          GetIeeeAddr(mac_addr+7, strIeeeAddr);   //从末端往前段转换
-          
-#ifdef ENGLISH 
-          HalLcdWriteString("IeeeAddr:", HAL_LCD_LINE_3 );
-#else
-          HalLcdWriteString("设备地址：", HAL_LCD_LINE_3 );
-#endif  
-          HalLcdDispString(48, 0,"    ",CODE_16_16);
-          HalLcdWriteString((char *)strIeeeAddr, HAL_LCD_LINE_4 );
-          
-          temp_sens_model=CHECK_MAC_ADDR_MODE;
-          shut_down_time=system_time;
-        }
-      }
-      if(temp_sens_model!=CHECK_MAC_ADDR_MODE)
-      {
-        SerialApp_SendPeriodicMessage();        
-      }
-      else
-      {
-        uint8 buff[3]={0XB9,0X00,0xB9};
-        HalUARTWrite (HAL_UART_PORT_0, (uint8 *)buff, 3);  //close the lesa
-      }
-       
-#else      
       SerialApp_SendPeriodicMessage();
-#endif
-    }
 
     
     osal_start_timerEx( SerialApp_TaskID, SERIALAPP_SEND_PERIODIC_EVT,
@@ -408,80 +369,6 @@ UINT16 SerialApp_ProcessEvent( uint8 task_id, UINT16 events )
   {
     SerialApp_Resp();
     return ( events ^ SERIALAPP_RESP_EVT );
-  }
-  
-  if ( events & SERIALAPP_SYSTEM_TIME )
-  {
-    system_time++;
-    //--------------------------------------------
-#if defined(ZDO_COORDINATOR) || defined(ZIGBEE_COLORFUL_LIGHT)
-    if(INT==0)   //the button is pressed
-    {
-      if(++bt_press_down_time > 10)bt_press_down_time = 10;
-    }  
-    else
-    {
-      if(bt_press_down_time>2)
-      {
-#if defined(ZDO_COORDINATOR)             //if works in coordinator model, then report a cmd
-        JsonCreatDoCoordCtrlReturn(ZIGBEE_FUN_CODE_SHUT_DOWN,1);
-#endif
-        KEEP=0;
-      }
-      else
-        bt_press_down_time = 0;
-    }
-#endif
-      
-#ifdef ZIGBEE_RFID
-    if(SerialApp_NwkState != DEV_END_DEVICE)
-      HalLedBlink (HAL_LED_3, 1, HAL_LED_DEFAULT_DUTY_CYCLE, HAL_LED_DEFAULT_FLASH_TIME);
-    
-    if(system_time==shut_down_time+1)
-    {
-      
-      /*uint8 system_soc=0;
-      char rfid_json[100]={0};
-      system_soc=systemSoc(1);
-      sprintf(rfid_json,"{\"jsonType\":%d,\"cmd\":%d,\"short_addr\":\"%x\",\"SOC\":%d}",JSON_TYPE_ZIGBEE_TO_GETWAY,ZIGBEE_FUN_CODE_SHUT_DOWN,ep_addr.short_addr,system_soc); 
-      SerialApp_SendDataToCoordinator((uint8*)rfid_json, strlen(rfid_json)+1,SERIALAPP_JSON_CLUSTERID);*/
-      osal_stop_timerEx( SerialApp_TaskID, SERIALAPP_SEND_PERIODIC_EVT);   //发送成功后即停止周期性上报
-      KEEP=0;
-    }
-   // if(system_time==shut_down_time+4)    //稍加等待，便于将SOC发送完毕
-      
-      
-#endif
-    
-#ifdef ZIGBEE_SENS_TEMP  
-
-      
-      
-      
-    if(system_time==shut_down_time+10)     //the uplimit time of turn on  or shut down the system after keep 5 second when button down is detected
-    {
-      if(systemSoc(1)<20)
-      {
-        uint8 i=3;
-        while(i--)
-        {
-#ifdef ENGLISH 
-              LcdClearLine(2, 6);
-              HalLcdWriteString("   Low Power!   ", HAL_LCD_LINE_1 );
-#else
-              LcdClearLine(2, 6);
-              HalLcdDispString(0, 3,"电量低！", CODE_32_32);
-              //HalLcdWriteString("      电量低！     ", HAL_LCD_LINE_1 ); 
-#endif  
-              Delay1ms(5000);    
-        }
-      }
-      KEEP=0; 
-    }  
-#endif     
-    osal_start_timerEx( SerialApp_TaskID, SERIALAPP_SYSTEM_TIME,
-                       (SERIALAPP_SEND_PERIODIC_TIMEOUT + (osal_rand() & 0x00FF)) );
-    return ( events ^ SERIALAPP_SYSTEM_TIME );
   }
   return ( 0 ); 
 }
@@ -516,6 +403,7 @@ void SerialApp_HandleKeys( uint8 shift, uint8 keys )
 //    temp_sens_model=CHECK_MAC_ADDR_MODE;
 //    HalLcdWriteString("     9999    ", HAL_LCD_LINE_1 );
 #endif  
+    HalUARTWrite(UART0, "AT+GETGPS=\"ALL\"\r", sizeof("AT+GETGPS=\"ALL\r\""));
   }
   
   if ( keys & HAL_KEY_SW_1 ) //按S2
@@ -565,7 +453,27 @@ void SerialApp_HandleKeys( uint8 shift, uint8 keys )
   }
   
 }
-
+//------------------------------------------------------------
+void SerialApp_SendDataToGetway(uint8* data, int len,uint16 shortAddr)
+{
+  uint8 tmp[100]={0};
+  if(data==NULL)
+  {
+    return;
+  }
+  tmp[0]=0x24;
+  tmp[1]=0x40;
+  tmp[2]=HI_UINT16(shortAddr);
+  tmp[3]=LO_UINT16(shortAddr);
+  tmp[4] = ZIGBEE_FUN_CODE_GPS;
+  tmp[5]=len;
+  osal_memcpy(&tmp[6], data, len);
+  tmp[5+len+1]=XorCheckSum(&tmp[2], len+4);
+  tmp[5+len+2]='\r';
+  tmp[5+len+3]='\n';
+  HalUARTWrite(UART0, tmp, len+9);
+}
+//------------------------------------------------------------
 static void SerialApp_SendDataToEndDevice(uint8* data, int len)
 {
   if(data==NULL)
@@ -716,84 +624,7 @@ static void parseRfData(uint8* data, int len)
   switch(fc)
   {
     
-#ifdef ZIGBEE_SENSOR			
-   
-//  case ZIGBEE_FUN_CODE_CHECK_LAMP:
-//    //终端收到查询命令
-//    if(addr==ep_addr.short_addr ||addr==0xffff)
-//    {
-//      SerialApp_SendData_Lamp(ZIGBEE_FUN_CODE_CHECK_LAMP);
-//    }
-//    break;
-//  case ZIGBEE_FUN_CODE_CTRL_LAMP:
-//    //控制终端上的灯
-//    if(addr==ep_addr.short_addr ||addr==0xffff)
-//    {
-//      SetLamp(data[6]>0?true:false);
-//      SerialApp_SendData_Lamp(ZIGBEE_FUN_CODE_CTRL_LAMP);
-//    } 
-//    break;
-//  case ZIGBEE_FUN_CODE_CHECK_Smoke:
-//    
-//    //终端收到查询命令
-//    if(addr==ep_addr.short_addr ||addr==0xffff)
-//    {
-//      SerialApp_SendData_MQ2();
-//    }
-//    break;
-//  case ZIGBEE_FUN_CODE_CHECK_HUMAN:
-//    
-//    //终端收到查询命令
-//    if(addr==ep_addr.short_addr ||addr==0xffff)
-//    {
-//      SerialApp_SendData_Human();
-//    }
-//    break;
-//  case ZIGBEE_FUN_CODE_CHECK_LIGHT:
-//    
-//    //终端收到查询命令
-//    if(addr==ep_addr.short_addr ||addr==0xffff)
-//    {
-//      //SerialApp_SendData_MQ2();
-//    }
-//    break;
-//  case ZIGBEE_FUN_CODE_CHECK_WindowCurtains:
-//    //终端收到查询命令
-//    if(addr==ep_addr.short_addr ||addr==0xffff)
-//    {
-//      //SerialApp_SendData_MQ2();
-//    }
-//    break;
-//  case ZIGBEE_FUN_CODE_CTRL_WindowCurtains:
-//    
-//    //终端收到查询命令
-//    if(addr==ep_addr.short_addr ||addr==0xffff)
-//    {
-//      //SerialApp_SendData_MQ2();
-//    }
-//    break;
-//  case ZIGBEE_FUN_CODE_CHECK_RFID:
-//    //终端收到查询命令
-//    if(addr==ep_addr.short_addr ||addr==0xffff)
-//    {
-//      //SerialApp_SendData_MQ2();
-//    }
-//    break;
-//  case ZIGBEE_FUN_CODE_CHECK_TEMP_HUM:
-//    
-//    //终端收到查询命令
-//    if(addr==ep_addr.short_addr ||addr==0xffff)
-//      //	SerialApp_SendData_DHT11();
-//      break;
-//  case ZIGBEE_FUN_CODE_CHECK_Flame:
-//    
-//    //终端收到查询命令
-//    if(addr==ep_addr.short_addr ||addr==0xffff)
-//    {
-//      //SerialApp_SendData_MQ2();
-//    }				
-//    break;
-#endif
+
     
 #ifdef ZIGBEE_STEP_MOTOR   //不是传感器节点，而是步进电机节点
   case ZIGBEE_FUN_CODE_STEP:
@@ -860,6 +691,8 @@ static void parseRfData(uint8* data, int len)
   
   
 }
+
+int mLed1=0;
 void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
 {
   uint16 shortAddr;
@@ -876,7 +709,7 @@ void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
   
   //HalUARTWrite(UART0, afRxData, afDataLen);	
   
-  //shortAddr=pkt->srcAddr.addr.shortAddr;
+  shortAddr=pkt->srcAddr.addr.shortAddr;
   //APSME_LookupExtAddr(shortAddr,strIeeeAddr );
   //GetIeeeAddr(strIeeeAddr, strIeeeAddr);
   //查询单个终端上所有传感器的数据 3A 00 01 02 39 23  响应：3A 00 01 02 00 00 00 00 xor 23
@@ -885,7 +718,9 @@ void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
    
   case SERIALAPP_CLUSTERID:
 
+     
     
+        
     //最短的数据包至少有9个字节
     //sd sd addr addr fc len xor ed ed
     //判断数据头正确,校验也正确
@@ -905,26 +740,30 @@ void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
       }
     }
     
-//    else if(pkt->cmd.DataLength==12)
-//    {
-//      if(pkt->cmd.Data[0]==0x3B)       //终端联网成功
-//      {
-//        shortAddr=pkt->cmd.Data[1]<<8|pkt->cmd.Data[2];
-//        pIeeeAddr=&pkt->cmd.Data[3];
-//        dev_type=(DEV_TYPE)pkt->cmd.Data[11];
-//        //获得IEEE地址
-//        uint8 strIeeeAddr[17] = {0};
-//        
-//        GetIeeeAddr(pIeeeAddr+7, strIeeeAddr);   //从末端往前段转换
-//
-//        char rfid_json[100]={0};
-//        sprintf(rfid_json,"{\"jsonType\":%d,\"cmd\":%d,\"IEEE_addr\":\"%s\",\"short_addr\":\"%04X\",\"dev_type\":%d}",JSON_TYPE_ZIGBEE_TO_GETWAY,ZIGBEE_FUN_CODE_ZIGBEE_ADDR_REGIST,strIeeeAddr,shortAddr,dev_type);
-//        HalUARTWrite (UART0, (uint8*)rfid_json, strlen(rfid_json)+1);
-//        
-//      }
-//    }
     else
-      ;
+             //闪烁LED1
+        if(mLed1==0)
+        {
+          //亮
+           mLed1=1;
+           P1_0=0;
+        }
+        else
+        {
+          //灭
+          mLed1=0;
+          P1_0=1;
+        }
+        
+        char buf[16]; 
+        memset(buf,0,16);
+        //LCD显示信号
+        sprintf(buf, "rssi:%d", pkt->rssi);
+        HalLcdWriteString(buf, HAL_LCD_LINE_3 );
+        
+        //串口输出信号
+        HalUARTWrite(0, buf, osal_strlen(buf));
+        HalUARTWrite(0, "\r\n", 2);
     break;
     
     // A response to a received serial data block.
@@ -951,13 +790,18 @@ void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
     break;
   case SERIALAPP_GPS_PKG: 
     //LCD显示
-#ifdef ZIGBEE_GPS
-    gpsDisplay(pkt->cmd.Data); 
-#endif
+    gpsDisplay(afRxData+6); 
+    HalUARTWrite(UART0, afRxData, afDataLen+1);
+    SerialApp_SendDataToGetway(afRxData, afDataLen,shortAddr);
     break;
     
   case SERIALAPP_END_DEV_INFO:
     
+    break;
+  case SERIALAPP_PACKAGED:
+    HalUARTWrite(UART0, afRxData, afDataLen);
+        //LCD显示
+    gpsDisplay(afRxData+6); 
     break;
   default:
     break;
@@ -1048,55 +892,23 @@ static void SerialApp_Send(void)
       uint8 UartDataLen=SerialApp_TxLen;
       uint8 UartRxData[SERIAL_APP_TX_MAX]={0};
       
+
       osal_memcpy(UartRxData, SerialApp_TxBuf, UartDataLen);
+
       
 #if defined(ZDO_COORDINATOR)
 #else
       
 #ifdef ZIGBEE_GPS     
-      GpsDataParse((char *)SerialApp_TxBuf, (uint8)SerialApp_TxLen);
+      
+      //SerialApp_SendDataToCoordinator(UartRxData, UartDataLen,SERIALAPP_PACKAGED);
+      GpsDataParse((char *)SerialApp_TxBuf, (uint8)UartDataLen);
 #endif   
       
-#ifdef ZIGBEE_SENS_TEMP  
-      if(UartDataLen==3)
-      {
-        uint8 xor;
-        xor=XorCheckSum(&UartRxData[0], (UartDataLen-1));
-        if(UartRxData[UartDataLen-1]==xor)
-        {
-            if(SerialApp_SendData_Temp(UartRxData)==0)   //if successed
-              osal_stop_timerEx( SerialApp_TaskID, SERIALAPP_SEND_PERIODIC_EVT);  
-        }
-      }
-#endif      
+     
       
 #endif     
-      
-      //最短的数据包至少有9个字节
-      //sd sd addr addr fc len xor ed ed
-      //判断数据头正确,校验也正确
-      if(UartDataLen>=9 && UartRxData[0]=='$' && UartRxData[1]=='@' && UartRxData[UartDataLen-2]=='\r' && 
-         UartRxData[UartDataLen-1]=='\n')
-      {
-        uint8 xor=0;
-        
-        //计算校验，不算头、尾和校验位，共5个字节
-        xor=XorCheckSum(&UartRxData[2], UartDataLen-5);
-        
-        //校验码正确
-        if(UartRxData[UartDataLen-3]==xor)
-        {
-          //针对数据进行解析
-          parseUartRxData(UartRxData, UartDataLen);
-        }
-      }
-      else
-      {
-        //错误的数据，或者其它的数据
-        //        	HalUARTWrite(UART0, "error\r\n", 7);
-        //        	HalUARTWrite(UART0, SerialApp_TxBuf, UartDataLen);
-      }
-      
+
       SerialApp_TxLen = 0;
     }
   }
@@ -1153,6 +965,7 @@ static void SerialApp_CallBack(uint8 port, uint8 event)
 void SerialApp_SendPeriodicMessage( void )
 {
 #if defined(ZDO_COORDINATOR)
+  SerialApp_SendDataToEndDevice("D1", 2);
   if(virb_in_flag)
   {
       if(IS_VIRB)    //  if detect the sens is not in
@@ -1187,52 +1000,16 @@ void SerialApp_SendPeriodicMessage( void )
 
 #else
   period_time++;
-
-  
-  /*if (SerialApp_NwkState != DEV_END_DEVICE)
+  if(period_time==2)
   {
-    return;
-  }
-  */
-#ifdef ZIGBEE_SENS_TEMP
-  //if(system_time<15)
-  {
-    uint8 buff[2]={0X0B,0X0B};
-    HalUARTWrite (UART0, (uint8 *)buff, 2);  //read the temp value from the temp sensor  
+    period_time = 0;
+    is_time_to_report = 1;
+    GPS_POWER = 1;
   }
 
-#endif
-  
-  
-#ifdef ZIGBEE_RFID
-  //if(FindReadRfidErr)   //can't find & read the rfid card
-    RfidFindReadCard();  
-#endif
-
-#ifdef ZIGBEE_SENSOR
-  SerialApp_SendData_DHT11();
-  SerialApp_SendData_MQ2();
-  SerialApp_SendData_Human(); 
-#endif  
-  
-#ifdef ZIGBEE_AI_DETECT
-  SerialApp_Send_ADC_Message(); 
-#endif  
-  
-#ifdef ZIGBEE_DI_DETECT
-  SerialApp_Send_DI_Message(); 
-#endif   
-  
-#ifdef ZIGBEE_COLORFUL_LIGHT
-  uint8 color_num = 0;
-  if(lightChangeStep==0)
-    lightChangeStep=1;
-  color_num = period_time / (256-lightChangeStep);
-  LightOnModle(lightCtlModle,lightChangeStep,color_num);
-#endif 
 
 #endif
-  //  SerialApp_SendData_Lamp(ZIGBEE_FUN_CODE_CHECK_LAMP);
+
 }
 
 
@@ -1507,36 +1284,12 @@ void JsonCreatSendEndDevInfo(uint8 *data, uint16 addr)
   HalUARTWrite (UART0, (uint8*)dev_info_json, strlen(dev_info_json)+1);
   
 }
-#else     //if work in endDevice model
+
+#endif    //end of coordinater function define
 
 
+#if defined(ZDO_ENDDEVICE)
 
-      
-        
-
-//------------------------------------------------------------------------------------------------------------------------------------------
-#ifdef ZIGBEE_SENS_TEMP
-
-#endif
-//-------------------------------------------------------------------------------------
-
-#ifdef ZIGBEE_SENSOR
-
-
-
-#endif
-//---------------------------------------------------------------
-#ifdef ZIGBEE_STEP_MOTOR
-
-
-#endif
-
-//---------------------------------------------------------------
-#ifdef ZIGBEE_RFID
-
-
-
-#endif             //endif of RFID block
 
 //-------------------------------------------------------start of AI dection block
 #ifdef ZIGBEE_AI_DETECT
@@ -1679,73 +1432,9 @@ void SerialAppSetColorfulLight(uint8 *data, int len)
 #endif        //终端类型定义结束   七彩灯 
 
 
-
-
 #endif              //endif of EndDevice block
 
-/****************************
-//初始化IO口程序
-*****************************/
-void IO_init()
-{
-#ifdef ZIGBEE_SENSOR
-  sensors_init();
-#endif 
-  
-#ifdef ZIGBEE_STEP_MOTOR
-  step_motor_init();
-#endif  
-  
-#ifdef ZIGBEE_RFID
-  
-  rfidInit();
-#endif	
 
-#ifdef ZIGBEE_SENS_TEMP
-    temp_sens_init();
-#endif	
-  
-#ifdef ZIGBEE_COLORFUL_LIGHT
-  start_pwm();
-#endif
-#ifdef ZIGBEE_GPS
-  gpsInit();
-#endif
-
-#ifdef ZDO_COORDINATOR
-  P0SEL &= ~0XF3;                  //设置P0_DIR普通IO
-  P0DIR = P0_DIR;//P0_DIR输出
-  P1SEL &= ~P1_DIR;                  //设置P0_DIR普通IO
-  P1DIR |= P1_DIR;//P0_DIR输出
-  KEEP=TRUE;
-  LED=1;
-  _24V_ON=0;
-  CUR_ON=0;
-  while(INT==false);   //if the button stay 0, then stop there
-  for(int i=1;i<20;i++)
-  {
-    Delay1ms(1000);
-    if(INT==0)   //the button is pressed
-    {
-      if(++bt_press_down_time > 10)bt_press_down_time = 10;
-    }  
-    else
-    {
-      if(bt_press_down_time>1)
-        KEEP=0;
-      else
-        bt_press_down_time = 0;
-    }  
-    LED=0;
-    Delay1ms(1000);
-    
-
-//    LED=1;
-  }
-//  
-#endif	  
-   
-}
 
 //-----------------------计算剩余电量-------------------------------
 
@@ -1811,5 +1500,48 @@ void Delay1ms(unsigned int msec)
     for (i=0; i<msec; i++)
         for (j=0; j<530; j++);
 }
+
+#if defined(ZDO_COORDINATOR) || defined(ZDO_ENDDEVICE)
 /*********************************************************************
 *********************************************************************/
+/****************************
+//初始化IO口程序
+*****************************/
+void IO_init()
+{
+#ifdef ZIGBEE_SENSOR
+  sensors_init();
+#endif 
+  
+#ifdef ZDO_COORDINATOR
+  P0SEL &= ~0XF3;                  //设置P0_DIR普通IO
+  P0DIR = P0_DIR;//P0_DIR输出
+  P1SEL &= ~P1_DIR;                  //设置P0_DIR普通IO
+  P1DIR |= P1_DIR;//P0_DIR输出
+  KEEP=TRUE;
+  LED=1;
+  _24V_ON=0;
+  CUR_ON=0;
+  while(INT==false);   //if the button stay 0, then stop there
+  for(int i=1;i<1;i++)
+  {
+    Delay1ms(1000);
+    if(INT==0)   //the button is pressed
+    {
+      if(++bt_press_down_time > 10)bt_press_down_time = 10;
+    }  
+    else
+    {
+      if(bt_press_down_time>1)
+        KEEP=0;
+      else
+        bt_press_down_time = 0;
+    }  
+    LED=0;
+    Delay1ms(1000);
+  }
+//  
+#endif	  
+   
+}
+#endif	 
