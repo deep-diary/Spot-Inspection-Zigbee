@@ -31,7 +31,7 @@
 #include "gps.h"
 #include "CattleOrientation.h"
 #include "gprs.h"
-
+#include "OSAL_PwrMgr.h"
 /*********************************************************************
 * MACROS
 */
@@ -50,7 +50,6 @@ SERIAL_TYPE serial_type = SERIAL_TYPE_GPRS_INIT;
 
 
 
-uint8 system_time=0;
 uint8 is_time_to_report=0;
 uint8 period_time=0;
 uint8 shut_down_time=SHUT_DOWN_TIME;
@@ -192,7 +191,6 @@ static void PrintAddrInfo(uint16 shortAddr, uint8 *pIeeeAddr);
 static void AfSendAddrInfo(void);
 static void GetIeeeAddr(uint8 * pIeeeAddr, uint8 *pStr);
 static void SerialApp_SendPeriodicMessage( void );
-static uint8 GetDataLen(uint8 fc);
 static void parseUartRxData(uint8* data, int len);
 static void parseRfData(uint8* data, int len);
 uint8 XorCheckSum(uint8 * pBuf, uint8 len);
@@ -267,10 +265,10 @@ void SerialApp_Init( uint8 task_id )
 #else  
   IO_init();
 #endif
+
 //  serial_type=SERIAL_TYPE_GPRS_SEND;
 //  gprsSendMsgToServer(gprs_cmd_nums);
-      osal_start_timerEx( SerialApp_TaskID, SERIALAPP_SEND_PERIODIC_EVT,
-                       (SERIALAPP_SEND_PERIODIC_TIMEOUT + (osal_rand() & 0x00FF)) );
+
 #if defined ( LCD_SUPPORTED )
   //HalLcdWriteString( "SerialApp", HAL_LCD_LINE_2 );
 #endif
@@ -330,6 +328,8 @@ UINT16 SerialApp_ProcessEvent( uint8 task_id, UINT16 events )
 #endif 
           
 #else                        //终端无线发送短地址、IEEE   
+          osal_start_timerEx( SerialApp_TaskID, SERIALAPP_SEND_PERIODIC_EVT,
+                       (SERIALAPP_SEND_PERIODIC_TIMEOUT + (osal_rand() & 0x00FF)) );
           AfSendAddrInfo();
           //JsonCreatSendEndDevInfo();   
 #endif
@@ -692,7 +692,7 @@ static void parseRfData(uint8* data, int len)
   
 }
 
-int mLed1=0;
+//int mLed1=0;
 void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
 {
   uint16 shortAddr;
@@ -702,7 +702,7 @@ void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
   uint8 delay;
   uint8 afRxData[100]={0};
   uint8 afDataLen=0; 	
-  
+  char buf_str[16]={0}; 
     // A message with a serial data block to be transmitted on the serial port.
   osal_memcpy(afRxData, pkt->cmd.Data, pkt->cmd.DataLength);
   afDataLen=pkt->cmd.DataLength;  
@@ -717,10 +717,7 @@ void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
   {
    
   case SERIALAPP_CLUSTERID:
-
-     
     
-        
     //最短的数据包至少有9个字节
     //sd sd addr addr fc len xor ed ed
     //判断数据头正确,校验也正确
@@ -742,7 +739,7 @@ void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
     
     else
              //闪烁LED1
-        if(mLed1==0)
+        /*if(mLed1==0)
         {
           //亮
            mLed1=1;
@@ -753,17 +750,17 @@ void SerialApp_ProcessMSGCmd( afIncomingMSGPacket_t *pkt )
           //灭
           mLed1=0;
           P1_0=1;
-        }
+        }*/
         
-        char buf[16]; 
-        memset(buf,0,16);
+      
+        //memset(buf,0,16);
         //LCD显示信号
-        sprintf(buf, "rssi:%d", pkt->rssi);
-        HalLcdWriteString(buf, HAL_LCD_LINE_3 );
+        sprintf(buf_str, "rssi:%d", pkt->rssi);
+        HalLcdWriteString(buf_str, HAL_LCD_LINE_1 );
         
         //串口输出信号
-        HalUARTWrite(0, buf, osal_strlen(buf));
-        HalUARTWrite(0, "\r\n", 2);
+        //HalUARTWrite(0, buf, osal_strlen(buf));
+        //HalUARTWrite(0, "\r\n", 2);
     break;
     
     // A response to a received serial data block.
@@ -999,14 +996,23 @@ void SerialApp_SendPeriodicMessage( void )
   }
 
 #else
+  char buf[16]={0};
+
   period_time++;
-  if(period_time==2)
+  sprintf(buf,"now is %d s ",period_time);
+  HalLcdWriteString(buf, HAL_LCD_LINE_3 ); 
+//  HalLcdWriteString( "waiting for time", HAL_LCD_LINE_4 );
+  if(period_time==60)
   {
     period_time = 0;
     is_time_to_report = 1;
     GPS_POWER = 1;
+    HalLcdWriteString("it is the time..", HAL_LCD_LINE_3 ); 
   }
-
+  if(GPS_POWER == 1)
+    osal_pwrmgr_device(PWRMGR_ALWAYS_ON);		//电源模式切换回电池模式
+  else
+    osal_pwrmgr_device(PWRMGR_BATTERY);		//电池模式切换回电源模式
 
 #endif
 
@@ -1511,6 +1517,7 @@ void IO_init()
 {
 #ifdef ZIGBEE_SENSOR
   sensors_init();
+  ioInitGpsPow();
 #endif 
   
 #ifdef ZDO_COORDINATOR
@@ -1523,7 +1530,7 @@ void IO_init()
   _24V_ON=0;
   CUR_ON=0;
   while(INT==false);   //if the button stay 0, then stop there
-  for(int i=1;i<1;i++)
+  for(int i=1;i<30;i++)
   {
     Delay1ms(1000);
     if(INT==0)   //the button is pressed

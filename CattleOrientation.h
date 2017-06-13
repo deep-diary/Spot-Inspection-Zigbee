@@ -11,5 +11,6 @@
 extern uint8 report_buf[40];
 extern uint16 report_buf_len;
 extern void cattleOrientationReport(void);
+extern void ioInitGpsPow(void);
 #endif
 #endif

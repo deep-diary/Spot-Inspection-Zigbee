@@ -8,6 +8,7 @@
 #include "OnBoard.h"
 #include "gps.h"
 #include "gprs.h"
+#include "CattleOrientation.h"
 #include "SerialApp.h"
 #ifdef ZIGBEE_GPS
 
@@ -306,14 +307,7 @@ void ParseframeData(char* frame, int bufflen)
 		//11) 度数。 
 		//12) Checksum.(检查位)
 
-        //上传数据到协调器
-        //SendGpsDataToCoor();
-        if(is_time_to_report)
-        {
-            cattleOrientationReport();
-            is_time_to_report = 0;
-            //GPS_POWER = 0;
-        }
+
           //cattleOrientationReport();  
 
 		//数据有效就保存
@@ -344,6 +338,23 @@ void ParseframeData(char* frame, int bufflen)
 			//+8为北京北京时间
 			CalibrateTime();		
 		}
+                        //上传数据到协调器
+          
+            //SendGpsDataToCoor();
+          if(is_time_to_report)
+          {
+            HalLcdWriteString("getting gps.....", HAL_LCD_LINE_4 ); 
+            if(m_Info.fix==1 || m_Info.fix==2)
+            {
+              SendGpsDataToCoor();
+              HalLcdWriteString("got the gps.....", HAL_LCD_LINE_4 ); 
+              cattleOrientationReport();
+              is_time_to_report = 0;
+              GPS_POWER = 0;    
+              m_Info.fix=0;   //初始化为未定位状态
+            }
+  
+          }
 	}
 	else if(0==strcmp( &keyBuff[0][3], "GGA" ))//获得GPGGA经纬海拔
 	{
@@ -644,7 +655,7 @@ void  SendGpsDataToCoor()
     //LCD显示
     gpsDisplay(data);
     //把GPS数据发到协调器
-    SerialApp_SendDataToCoordinator(data, 22,SERIALAPP_GPS_PKG);
+    //SerialApp_SendDataToCoordinator(data, 22,SERIALAPP_GPS_PKG);
     
 }
 

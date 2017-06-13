@@ -21,6 +21,9 @@ void cattleOrientationReport(void)
   uint8 gps_data_len=0;
   T_GpsOutData gps_data;
   gpsSave(&gps_data);     //获取gps数据 
+  //if(gps_data.fix==0)
+    //return ;
+  //gpsDisplay((uint8*)&gps_data);
   DHT11();                //获取温湿度
   
   gps_data_len=sizeof(gps_data);
@@ -40,10 +43,10 @@ void cattleOrientationReport(void)
   SerialApp_SendDataToCoordinator(SendBuf, gps_data_len+11,SERIALAPP_PACKAGED);
 }
 
-void ioInitGpsPow()
+void ioInitGpsPow(void)
 {
   P1SEL &= 0xFE;                  //设置P1.0口为普通IO
   P1DIR |= 0x01;                  //设置1.0为输出
-  GPS_POWER = 0;                  //断电
+  GPS_POWER = 1;                  //断电
 }
 #endif

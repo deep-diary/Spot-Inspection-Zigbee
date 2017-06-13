@@ -102,25 +102,24 @@ extern "C"
 //***********************终端节点模式选择*********************//
 //------------------------------------------------------------//
 //#define ZIGBEE_GPS
-#ifdef defined(ZDO_COORDINATOR)
-  
+#if defined(ZDO_COORDINATOR)
 #elif defined(ZDO_ENDDEVICE)
-//#define ZIGBEE_RFID
-//#define ZIGBEE_SENS_TEMP
-//#define ZIGBEE_AI_DETECT
-//#define ZIGBEE_DI_DETECT
-//#define ZIGBEE_DO_CTRL
-//#define ZIGBEE_IO_DECT_CTRL
-//#define ZIGBEE_SENSOR
-#define ZIGBEE_CATTER_ORIENTATION
-//#define ZIGBEE_STEP_MOTOR
-//#define ZIGBEE_COLORFUL_LIGHT
-  
-#ifdef ZIGBEE_CATTER_ORIENTATION
-#define ZIGBEE_SENSOR
-#define ZIGBEE_GPS
-#define ZIGBEE_GPRS
-#endif 
+  //#define ZIGBEE_RFID
+  //#define ZIGBEE_SENS_TEMP
+  //#define ZIGBEE_AI_DETECT
+  //#define ZIGBEE_DI_DETECT
+  //#define ZIGBEE_DO_CTRL
+  //#define ZIGBEE_IO_DECT_CTRL
+  //#define ZIGBEE_SENSOR
+  #define ZIGBEE_CATTER_ORIENTATION
+  //#define ZIGBEE_STEP_MOTOR
+  //#define ZIGBEE_COLORFUL_LIGHT
+    
+  #ifdef ZIGBEE_CATTER_ORIENTATION
+    #define ZIGBEE_SENSOR
+    #define ZIGBEE_GPS
+    #define ZIGBEE_GPRS
+  #endif 
   
 #else
   
